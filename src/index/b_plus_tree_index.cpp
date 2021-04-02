@@ -23,7 +23,7 @@ void BPLUSTREE_INDEX_TYPE::InsertEntry(const Tuple &key, RID rid,
   KeyType index_key;
   index_key.SetFromKey(key);
 
-  container_.Insert(index_key, rid, transaction);
+  container_.Insert(index_key,rid, transaction);
 }
 
 INDEX_TEMPLATE_ARGUMENTS

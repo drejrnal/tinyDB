@@ -62,6 +62,7 @@ public:
   std::string ToString(bool verbose = false) const;
 
 private:
+
   void CopyHalfFrom(MappingType *items, int size);
   void CopyAllFrom(MappingType *items, int size);
   void CopyLastFrom(const MappingType &item);

@@ -23,7 +23,7 @@ extern std::atomic<bool> ENABLE_LOGGING;
 #define PAGE_SIZE 512     // size of a data page in byte
 #define LOG_BUFFER_SIZE                                                            \
   ((BUFFER_POOL_SIZE + 1) * PAGE_SIZE) // size of a log buffer in byte
-#define BUCKET_SIZE 50                 // size of extendible hash bucket
+#define BUCKET_SIZE 50                 // size of extendible hash Bucket
 #define BUFFER_POOL_SIZE 10            // size of buffer pool
 
 typedef int32_t page_id_t; // page id type

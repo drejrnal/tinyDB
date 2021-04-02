@@ -9,6 +9,8 @@
 
 #pragma once
 
+#include <list>
+#include <unordered_map>
 #include "buffer/replacer.h"
 #include "hash/extendible_hash.h"
 
@@ -31,6 +33,9 @@ public:
 
 private:
   // add your member variables here
+  using Iterator =typename std::list<T>::iterator;
+  std::unordered_map<T ,Iterator> page_list_directory_;
+  std::list<T> pages_pointer_;
 };
 
 } // namespace cmudb

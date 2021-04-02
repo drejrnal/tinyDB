@@ -103,6 +103,7 @@ public:
 
 private:
   TransactionState state_;
+
   // thread id, single-threaded transactions
   std::thread::id thread_id_;
   // transaction id
@@ -124,4 +125,5 @@ private:
   // this set contains rid of exclusive-locked tuples by this transaction
   std::shared_ptr<std::unordered_set<RID>> exclusive_lock_set_;
 };
+
 } // namespace cmudb
