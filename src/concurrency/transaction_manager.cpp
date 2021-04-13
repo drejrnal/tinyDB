@@ -14,6 +14,9 @@ namespace cmudb {
 
         if (ENABLE_LOGGING) {
             // TODO: write log and update transaction's prev_lsn here
+            LogRecord logRecord( txn->GetTransactionId(), txn->GetPrevLSN(), LogRecordType::BEGIN );
+            lsn_t current_lsn = log_manager_->AppendLogRecord( logRecord );
+            txn->SetPrevLSN( current_lsn );
         }
 
         return txn;
@@ -37,6 +40,17 @@ namespace cmudb {
 
         if (ENABLE_LOGGING) {
             // TODO: write log and update transaction's prev_lsn here
+            LogRecord logRecord( txn->GetTransactionId(), txn->GetPrevLSN(), LogRecordType::COMMIT );
+            lsn_t current_lsn = log_manager_->AppendLogRecord( logRecord );
+            txn->SetPrevLSN( current_lsn );
+            /*
+             * whenever you call Commit or Abort method,
+             * you need to make sure your log records are
+             * permanently stored on disk file before release the locks.
+             * But instead of forcing flush, you need to wait for LOG_TIMEOUT or
+             * other operations to implicitly trigger the flush operations.
+             */
+            log_manager_->flushLogToDisk( false );
         }
 
         // release all the lock
@@ -74,6 +88,17 @@ namespace cmudb {
 
         if (ENABLE_LOGGING) {
             // TODO: write log and update transaction's prev_lsn here
+            LogRecord logRecord( txn->GetTransactionId(), txn->GetPrevLSN(), LogRecordType::ABORT );
+            lsn_t current_lsn = log_manager_->AppendLogRecord( logRecord );
+            txn->SetPrevLSN( current_lsn );
+            /*
+             * whenever you call Commit or Abort method,
+             * you need to make sure your log records are
+             * permanently stored on disk file before release the locks.
+             * But instead of forcing flush, you need to wait for LOG_TIMEOUT or
+             * other operations to implicitly trigger the flush operations.
+             */
+            log_manager_->flushLogToDisk( false );
         }
 
         // release all the lock

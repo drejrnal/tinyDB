@@ -61,8 +61,16 @@ namespace cmudb {
                 replacer_->Victim(page);
                 if (!page)
                     return nullptr;
-                if (page->is_dirty_)
+                if (page->is_dirty_) {
+                    /*
+                     * before page is written to disk, flush the log record
+                     * up to the page LSN
+                     */
+                    if (log_manager_->GetPersistentLSN() <= page->GetLSN()) {
+                        log_manager_->flushLogToDisk(true);
+                    }
                     disk_manager_->WritePage(page->page_id_, page->GetData());
+                }
                 page_table_->Remove(page->page_id_);
             }
         }
@@ -102,6 +110,13 @@ namespace cmudb {
         std::lock_guard<std::mutex> lock(latch_);
         Page *page = nullptr;
         if (page_table_->Find(page_id, page)) {
+            /*
+             * before page is written to disk, flush the log record
+             * up to the page LSN
+             */
+            if (log_manager_->GetPersistentLSN() <= page->GetLSN()) {
+                log_manager_->flushLogToDisk(true);
+            }
             disk_manager_->WritePage(page_id, page->GetData());
             page->is_dirty_ = false;
             return true;
@@ -121,8 +136,17 @@ namespace cmudb {
         std::lock_guard<std::mutex> lock(latch_);
         Page *page = nullptr;
         if (page_table_->Find(page_id, page) && page->pin_count_ == 0) {
-            if (page->is_dirty_)
+            if (page->is_dirty_) {
+                /*
+                 * before page is written to disk, flush the log record
+                 * up to the page LSN
+                 */
+                if( log_manager_->GetPersistentLSN() <= page->GetLSN() ) {
+                    log_manager_->flushLogToDisk(true);
+                }
+                disk_manager_->WritePage(page->page_id_, page->GetData());
                 disk_manager_->WritePage(page_id, page->GetData());
+            }
             page->is_dirty_ = false;
             page->page_id_ = INVALID_PAGE_ID;
             replacer_->Erase(page);

@@ -3,7 +3,7 @@
  */
 
 #include "logging/log_manager.h"
-
+#include "common/logger.h"
 namespace cmudb {
 /*
  * set ENABLE_LOGGING = true
@@ -15,6 +15,7 @@ namespace cmudb {
     void LogManager::RunFlushThread() {
 
         ENABLE_LOGGING = true;
+
         flush_thread_ = new std::thread([&] {
             //buffer pool force flush时，启动该线程
             while (ENABLE_LOGGING) {
@@ -22,17 +23,22 @@ namespace cmudb {
                 cv_.wait_for(cvlock, LOG_TIMEOUT, [&] {
                     return needFlush_.load();
                 });
+
                 if (writePosition > 0) {
+
                     std::swap(log_buffer_, flush_buffer_);
                     std::swap(writePosition, flushBufferSize);
+
                     disk_manager_->WriteLog(flush_buffer_, flushBufferSize);
+
                     flushBufferSize = 0;
                     SetPersistentLSN(last_lsn_);
                 }
                 //此时log buffer缓冲区可继续写，通知AppendRecord线程，继续写log
-                notFull.notify_one();
                 needFlush_ = false;
+                notFull.notify_all();
             }
+
         });
 
     }
@@ -43,25 +49,40 @@ namespace cmudb {
     void LogManager::StopFlushThread() {
 
         ENABLE_LOGGING = false;
+        flushLogToDisk( true );
+        LOG_DEBUG( " Signal flushing thread " );
         flush_thread_->join();
+        assert(flushBufferSize == 0 && writePosition == 0 );
+        delete flush_thread_;
 
     }
 
     /*
+     * txn commit/abort 或者 buffer pool evict page时调用该函数，
      * group commit 控制log buffer内的内容是否同步到磁盘中
      */
     void LogManager::flushLogToDisk(bool force) {
-        if (!force) {
+        /*
+         * 在log buffer内容刷到磁盘时，停止append线程
+         * 同其余append thread竞争，若拿到锁，则Append线程阻塞
+         */
+        std::unique_lock<std::mutex> sync(latch_);
+        if (force) {
+            /*
+             * 该函数被buffer pool manager calling thread调用，立即唤醒flush thread写日志，
+             */
             needFlush_ = true;
             cv_.notify_one();
-            //在log buffer内容刷到磁盘时，停止append线程
-            std::unique_lock<std::mutex> cond_mutex(latch_);
             if (ENABLE_LOGGING)
-                notFull.wait(cond_mutex, [&] { return !needFlush_.load(); });
+                notFull.wait(sync, [&] { return !needFlush_.load(); });
         } else {
-            //等待LOG_TIMEOUT
-            std::unique_lock<std::mutex> cond_mutex(latch_);
-            notFull.wait(cond_mutex);
+            /*
+             * 等待LOG_TIMEOUT
+             * 要么等待flush thread直到
+             * LOG_TIMEOUT flush thread 写日志，完成后唤醒calling thread
+             * 出于 group commit 考虑
+             */
+            notFull.wait(sync);
         }
     }
 
@@ -122,6 +143,8 @@ namespace cmudb {
             log_record.new_tuple_.SerializeTo(log_buffer_ + pos);
         } else if (log_record.log_record_type_ == LogRecordType::NEWPAGE) {
             memcpy(log_buffer_ + pos, &log_record.prev_page_id_, sizeof(page_id_t));
+            pos +=sizeof(page_id_t);
+            memcpy( log_buffer_ + pos, &log_record.page_id_, sizeof( page_id_t ));
         }
 
         //写完log_record后更新log file的偏移量

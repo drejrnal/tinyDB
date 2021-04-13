@@ -21,7 +21,7 @@
  *------------------------------------------------------------------------------
  * For new page type log record
  *-------------------------------------------------------------
- * | HEADER | prev_page_id |
+ * | HEADER | prev_page_id | page_id
  *-------------------------------------------------------------
  */
 #pragma once
@@ -95,12 +95,12 @@ namespace cmudb {
 
         // constructor for NEWPAGE type
         LogRecord(txn_id_t txn_id, lsn_t prev_lsn, LogRecordType log_record_type,
-                  page_id_t page_id)
+                  page_id_t prev_page_id, page_id_t pageId)
                 : size_(HEADER_SIZE), lsn_(INVALID_LSN), txn_id_(txn_id),
                   prev_lsn_(prev_lsn), log_record_type_(log_record_type),
-                  prev_page_id_(page_id) {
+                  prev_page_id_(prev_page_id), page_id_(pageId) {
             // calculate log record size
-            size_ = HEADER_SIZE + sizeof(page_id_t);
+            size_ = HEADER_SIZE + sizeof(page_id_t) * 2;
         }
 
         ~LogRecord() {}
@@ -160,6 +160,7 @@ namespace cmudb {
 
         // case4: for new page opeartion
         page_id_t prev_page_id_ = INVALID_PAGE_ID;
+        page_id_t page_id_;
         const static int HEADER_SIZE = 20;
     }; // namespace cmudb
 

@@ -65,6 +65,13 @@ public:
   bool GetTuple(const RID &rid, Tuple &tuple, Transaction *txn,
                 LockManager *lock_manager);
 
+  inline void setPageLSN( lsn_t pageLSN ){
+      pageLSN_ = pageLSN;
+  }
+  inline lsn_t GetPageLSN(){
+      return pageLSN_;
+  }
+
   /**
    * Tuple iterator
    */
@@ -72,6 +79,7 @@ public:
   bool GetNextTupleRid(const RID &cur_rid, RID &next_rid);
 
 private:
+    lsn_t pageLSN_;
   /**
    * helper functions
    */

@@ -11,7 +11,6 @@
 #include <condition_variable>
 #include <future>
 #include <mutex>
-#include <>
 
 #include "disk/disk_manager.h"
 #include "logging/log_record.h"
@@ -23,8 +22,9 @@ namespace cmudb {
         LogManager(DiskManager *disk_manager)
                 : next_lsn_(0), persistent_lsn_(INVALID_LSN),
                   disk_manager_(disk_manager) {
-            // TODO: you may intialize your own defined memeber variables here
+            // 一定初始化flushBufferSize、writePosition为具体的值
             writePosition = 0;
+            flushBufferSize = 0;
             needFlush_ = false;
             log_buffer_ = new char[LOG_BUFFER_SIZE];
             flush_buffer_ = new char[LOG_BUFFER_SIZE];
@@ -47,6 +47,8 @@ namespace cmudb {
 
         // get/set helper functions
         inline lsn_t GetPersistentLSN() { return persistent_lsn_; }
+
+        inline size_t GetWritePosition() { return writePosition; }
 
         inline void SetPersistentLSN(lsn_t lsn) { persistent_lsn_ = lsn; }
 
