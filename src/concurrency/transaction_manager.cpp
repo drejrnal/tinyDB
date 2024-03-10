@@ -44,6 +44,7 @@ namespace cmudb {
             lsn_t current_lsn = log_manager_->AppendLogRecord( logRecord );
             txn->SetPrevLSN( current_lsn );
             /*
+             * 处于GROUP_COMMIT考虑
              * whenever you call Commit or Abort method,
              * you need to make sure your log records are
              * permanently stored on disk file before release the locks.

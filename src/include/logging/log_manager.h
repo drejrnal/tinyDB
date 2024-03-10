@@ -62,7 +62,9 @@ namespace cmudb {
         // also remember to change constructor accordingly
         //下一次写起始的位置
         size_t writePosition;
-        std::atomic<bool> needFlush_; //条件变量中的状态变量
+
+        //std::atomic<bool> needFlush_; //条件变量中的状态变量
+        bool needFlush_;
         std::condition_variable notFull;
 
         // atomic counter, record the next log sequence number

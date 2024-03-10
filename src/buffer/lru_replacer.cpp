@@ -54,9 +54,9 @@ namespace cmudb {
     bool LRUReplacer<T>::Erase(const T &value) {
         if (page_list_directory_.find(value) == page_list_directory_.end())
             return false;
-        auto pos = page_list_directory_.find(value);
-        page_list_directory_.erase(pos);
-        pages_pointer_.erase(pos->second);
+        //auto pos = page_list_directory_.find(value);
+        pages_pointer_.erase(page_list_directory_[value]);
+        page_list_directory_.erase(value);
         return true;
     }
 

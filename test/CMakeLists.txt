@@ -29,7 +29,7 @@ add_custom_target(check COMMAND ${CMAKE_CTEST_COMMAND} ${CTEST_FLAGS} --verbose)
 
 ##################################################################################
 # --[ Memcheck
-find_program(MEMORYCHECK_COMMAND valgrind REQUIRED)
+#find_program(MEMORYCHECK_COMMAND valgrind REQUIRED)
 # Note you can add '--gen-suppressions=all' to MEMORYCHECK_COMMAND_OPTIONS
 # if you want valgrind to print out the syntax to use to suppress a particular
 # memory leak

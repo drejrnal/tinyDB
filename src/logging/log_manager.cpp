@@ -14,21 +14,20 @@ namespace cmudb {
  */
     void LogManager::RunFlushThread() {
 
-        ENABLE_LOGGING = true;
-
+        ENABLE_LOGGING.store(true);
         flush_thread_ = new std::thread([&] {
             //buffer pool force flush时，启动该线程
-            while (ENABLE_LOGGING) {
+            while ( ENABLE_LOGGING.load() ) {
                 std::unique_lock<std::mutex> cvlock(latch_);
-                cv_.wait_for(cvlock, LOG_TIMEOUT, [&] {
-                    return needFlush_.load();
+                bool time_out = cv_.wait_for(cvlock, LOG_TIMEOUT, [&] {
+                    return needFlush_;
                 });
-
+                LOG_DEBUG("Begin to flush log buffer TIME_OUT[%d] Write position %d", time_out, (int)writePosition);
+                //如果超时，则将log buffer的内容持久到盘中。
                 if (writePosition > 0) {
-
                     std::swap(log_buffer_, flush_buffer_);
                     std::swap(writePosition, flushBufferSize);
-
+                    //fsync()调用 写盘
                     disk_manager_->WriteLog(flush_buffer_, flushBufferSize);
 
                     flushBufferSize = 0;
@@ -48,7 +47,7 @@ namespace cmudb {
  */
     void LogManager::StopFlushThread() {
 
-        ENABLE_LOGGING = false;
+        ENABLE_LOGGING.store( false );
         flushLogToDisk( true );
         LOG_DEBUG( " Signal flushing thread " );
         flush_thread_->join();
@@ -73,14 +72,21 @@ namespace cmudb {
              */
             needFlush_ = true;
             cv_.notify_one();
+            /*
+             * 此处调用notifu_one()前未调用sync.unlock()，因为后续需要访问needFlush_
+             * 需要sync上锁，故一直保持sync持有锁的状态，当调用wait()调用时再释放sync锁
+             */
             if (ENABLE_LOGGING)
-                notFull.wait(sync, [&] { return !needFlush_.load(); });
+                notFull.wait(sync, [&] { return !needFlush_; });
         } else {
             /*
-             * 等待LOG_TIMEOUT
-             * 要么等待flush thread直到
+             * 等待flush thread直到
              * LOG_TIMEOUT flush thread 写日志，完成后唤醒calling thread
-             * 出于 group commit 考虑
+             * 出于 group commit 考虑：
+             * whenever you call Commit or Abort method, you need to make sure
+             * your log records are permanently stored on disk file before release
+             * the locks. But instead of forcing flush, you need to wait for LOG_TIMEOUT
+             * or other operations to implicitly trigger the flush operations
              */
             notFull.wait(sync);
         }
@@ -108,22 +114,23 @@ namespace cmudb {
  */
     lsn_t LogManager::AppendLogRecord(LogRecord &log_record) {
         std::unique_lock<std::mutex> bufferLatch(latch_);
-
-        /*判断该log buffer剩余空间是否够存放log_record
+        /*
+         * 判断该log buffer剩余空间是否够存放log_record
          *  如果空间不够，则挂起当前append线程，唤醒flush线程
          *  否则，直接从offset位置开始写log record
          */
         if (writePosition + log_record.GetSize() >= LOG_BUFFER_SIZE) {
+            LOG_DEBUG("Buffer overflow force log buffer flush");
             needFlush_ = true;
             cv_.notify_one();
             notFull.wait(bufferLatch, [&] {
                 return writePosition + log_record.GetSize() < LOG_BUFFER_SIZE;
             });
         }
-        //TODO::待优化的并发度：如何使用原子类型进行加减？
+
         log_record.lsn_ = next_lsn_++;
 
-        memcpy(log_buffer_ + writePosition, &log_record, 20);
+        memcpy(log_buffer_ + writePosition, &log_record, LogRecord::HEADER_SIZE);
         int pos = writePosition + 20;
 
         if (log_record.log_record_type_ == LogRecordType::INSERT) {
@@ -139,7 +146,8 @@ namespace cmudb {
             memcpy(log_buffer_ + pos, &log_record.update_rid_, sizeof(RID));
             pos += sizeof(RID);
             log_record.old_tuple_.SerializeTo(log_buffer_ + pos);
-            pos += (log_record.old_tuple_.GetLength() + sizeof(int32_t)); //这里不明白为什么需要加sizeof(uint32_t)
+            //这里在deserialize过程内将old_tuple长度序列化，所以需要额外加上sizeof(int32_t)
+            pos += (log_record.old_tuple_.GetLength() + sizeof(int32_t));
             log_record.new_tuple_.SerializeTo(log_buffer_ + pos);
         } else if (log_record.log_record_type_ == LogRecordType::NEWPAGE) {
             memcpy(log_buffer_ + pos, &log_record.prev_page_id_, sizeof(page_id_t));
@@ -149,6 +157,7 @@ namespace cmudb {
 
         //写完log_record后更新log file的偏移量
         writePosition += log_record.GetSize();
+        last_lsn_.store(log_record.lsn_);
         return log_record.lsn_;
     }
 

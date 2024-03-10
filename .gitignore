@@ -1,0 +1,40 @@
+# Prerequisites
+*.d
+.DS_STORE
+cmake-build-debug/
+src/.DS_Store
+src/include/.DS_STORE
+
+# IDE related
+.idea
+.vscode
+
+# Compiled Object files
+*.slo
+*.lo
+*.o
+*.obj
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Compiled Dynamic libraries
+*.so
+*.dylib
+*.dll
+
+# Fortran module files
+*.mod
+*.smod
+
+# Compiled Static libraries
+*.lai
+*.la
+*.a
+*.lib
+
+# Executables
+*.exe
+*.out
+*.app

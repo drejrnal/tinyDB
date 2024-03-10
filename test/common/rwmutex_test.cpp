@@ -36,13 +36,13 @@ TEST(RWMutexTest, BasicTest) {
   std::vector<std::thread> threads;
   for (int tid = 0; tid < num_threads; tid++) {
     if (tid % 2 == 0) {
-      threads.push_back(std::thread([tid, &counter]() {
+      threads.emplace_back([&counter]() {
         counter.Read();
-      }));
+      });
     } else {
-      threads.push_back(std::thread([tid, &counter]() {
+      threads.emplace_back([&counter]() {
         counter.Add(1);
-      }));
+      });
     }
   }
   for (int i = 0; i < num_threads; i++) {
