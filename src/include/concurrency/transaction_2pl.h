@@ -1,0 +1,268 @@
+//===----------------------------------------------------------------------===//
+//
+//                         BusTub
+//
+// transaction.h
+//
+// Identification: src/include/concurrency/transaction.h
+//
+// Copyright (c) 2015-2019, Carnegie Mellon University Database Group
+//
+//===----------------------------------------------------------------------===//
+
+#pragma once
+
+#include <atomic>
+#include <deque>
+#include <memory>
+#include <string>
+#include <thread>  // NOLINT
+#include <unordered_set>
+
+#include "common/config.h"
+#include "common/logger.h"
+#include "page/page.h"
+
+namespace cmudb {
+
+/**
+ * Transaction states for 2PL:
+ *
+ *     _________________________
+ *    |                         v
+ * GROWING -> SHRINKING -> COMMITTED   ABORTED
+ *    |__________|________________________^
+ *
+ * Transaction states for Non-2PL:
+ *     __________
+ *    |          v
+ * GROWING  -> COMMITTED     ABORTED
+ *    |_________________________^
+ *
+ **/
+    enum class TransactionStateWith2PL {
+        GROWING, SHRINKING, COMMITTED, ABORTED
+    };
+
+/**
+ * Transaction isolation level.
+ */
+    enum class IsolationLevelWith2PL {
+        READ_UNCOMMITTED, REPEATABLE_READ, READ_COMMITTED
+    };
+
+/**
+ * Type of write operation.
+ */
+    enum class WTypeWith2PL {
+        INSERT = 0, DELETE, UPDATE
+    };
+
+    class TableHeap;
+
+    class Catalog;
+
+    using table_oid_t = uint32_t;
+    using index_oid_t = uint32_t;
+
+/**
+ * WriteRecord tracks information related to a write.
+ */
+    class TableWriteRecord {
+    public:
+        TableWriteRecord(RID rid, WTypeWith2PL wtype, TableHeap *table)
+                : rid_(rid), wtype_(wtype), table_(table) {}
+
+        RID rid_;
+        WTypeWith2PL wtype_;
+        /** The tuple is only used for the update operation. */
+        /** The table heap specifies which table this write record is for. */
+        TableHeap *table_;
+    };
+
+/**
+ * WriteRecord tracks information related to a write.
+ */
+    class IndexWriteRecord {
+    public:
+        IndexWriteRecord(RID rid, table_oid_t table_oid, WTypeWith2PL wtype, index_oid_t index_oid,
+                         Catalog *catalog)
+                : rid_(rid), table_oid_(table_oid), wtype_(wtype), index_oid_(index_oid), catalog_(catalog) {}
+
+        /** The rid is the value stored in the index. */
+        RID rid_;
+        /** Table oid. */
+        table_oid_t table_oid_;
+        /** Write type. */
+        WTypeWith2PL wtype_;
+        /** Each table has an index list, this is the identifier of an index into the list. */
+        index_oid_t index_oid_;
+        /** The catalog contains metadata required to locate index. */
+        Catalog *catalog_;
+    };
+
+/**
+ * Reason to a transaction abortion
+ */
+    enum class AbortReason {
+        LOCK_ON_SHRINKING,
+        UNLOCK_ON_SHRINKING,
+        UPGRADE_CONFLICT,
+        IMCOMPATIBLE_UPGRADE,
+        DEADLOCK,
+        LOCKSHARED_ON_READ_UNCOMMITTED,
+        LOCK_NOT_EXIST
+    };
+
+/**
+ * TransactionAbortException is thrown when state of a transaction is changed to ABORTED
+ */
+    class TransactionAbortException : public std::exception {
+        txn_id_t txn_id_;
+        AbortReason abort_reason_;
+
+    public:
+        explicit TransactionAbortException(txn_id_t txn_id, AbortReason abort_reason)
+                : txn_id_(txn_id), abort_reason_(abort_reason) {}
+
+        auto GetTransactionId() -> txn_id_t { return txn_id_; }
+
+        auto GetAbortReason() -> AbortReason { return abort_reason_; }
+
+        auto GetInfo() -> std::string {
+            switch (abort_reason_) {
+                case AbortReason::LOCK_ON_SHRINKING:
+                    return "Transaction " + std::to_string(txn_id_) +
+                           " aborted because it can not take locks in the shrinking state\n";
+                case AbortReason::UNLOCK_ON_SHRINKING:
+                    return "Transaction " + std::to_string(txn_id_) +
+                           " aborted because it can not excute unlock in the shrinking state\n";
+                case AbortReason::UPGRADE_CONFLICT:
+                    return "Transaction " + std::to_string(txn_id_) +
+                           " aborted because another transaction is already waiting to upgrade its lock\n";
+                case AbortReason::DEADLOCK:
+                    return "Transaction " + std::to_string(txn_id_) + " aborted on deadlock\n";
+                case AbortReason::LOCKSHARED_ON_READ_UNCOMMITTED:
+                    return "Transaction " + std::to_string(txn_id_) + " aborted on lockshared on READ_UNCOMMITTED\n";
+                case AbortReason::IMCOMPATIBLE_UPGRADE:
+                    return "Transaction " + std::to_string(txn_id_) + " aborted on incompatible upgrade\n";
+                case AbortReason::LOCK_NOT_EXIST:
+                    return "Transaction " + std::to_string(txn_id_) + " aborted on lock not exist\n";
+            }
+            // Todo: Should fail with unreachable.
+            return "";
+        }
+    };
+
+/**
+ * Transaction tracks information related to a transaction.
+ */
+    class TransactionWith2PL {
+    public:
+        explicit TransactionWith2PL(txn_id_t txn_id,
+                                    IsolationLevelWith2PL isolation_level = IsolationLevelWith2PL::REPEATABLE_READ)
+                : isolation_level_(isolation_level),
+                  thread_id_(std::this_thread::get_id()),
+                  txn_id_(txn_id),
+                  prev_lsn_(INVALID_LSN),
+                  shared_lock_set_{new std::unordered_set<RID>},
+                  exclusive_lock_set_{new std::unordered_set<RID>} {
+            // Initialize the sets that will be tracked.
+            table_write_set_ = std::make_shared<std::deque<TableWriteRecord>>();
+            index_write_set_ = std::make_shared<std::deque<IndexWriteRecord>>();
+        }
+
+        ~TransactionWith2PL() = default;
+
+        /** @return the id of the thread running the transaction */
+        inline auto GetThreadId() const -> std::thread::id { return thread_id_; }
+
+        /** @return the id of this transaction */
+        inline auto GetTransactionId() const -> txn_id_t { return txn_id_; }
+
+        /** @return the isolation level of this transaction */
+        inline auto GetIsolationLevel() const -> IsolationLevelWith2PL { return isolation_level_; }
+
+        /** @return the list of table write records of this transaction */
+        inline auto GetWriteSet() -> std::shared_ptr<std::deque<TableWriteRecord>> { return table_write_set_; }
+
+        /** @return the list of index write records of this transaction */
+        inline auto GetIndexWriteSet() -> std::shared_ptr<std::deque<IndexWriteRecord>> { return index_write_set_; }
+
+        /**
+         * Adds a tuple write record into the table write set.
+         * @param write_record write record to be added
+         */
+        inline void AppendTableWriteRecord(const TableWriteRecord &write_record) {
+            table_write_set_->push_back(write_record);
+        }
+
+        /**
+         * Adds an index write record into the index write set.
+         * @param write_record write record to be added
+         */
+        inline void AppendIndexWriteRecord(const IndexWriteRecord &write_record) {
+            index_write_set_->push_back(write_record);
+        }
+
+        /** @return the set of resources under a shared lock */
+        inline auto GetSharedLockSet() -> std::shared_ptr<std::unordered_set<RID>> { return shared_lock_set_; }
+
+        /** @return the set of resources under an exclusive lock */
+        inline auto GetExclusiveLockSet() -> std::shared_ptr<std::unordered_set<RID>> { return exclusive_lock_set_; }
+
+        /** @return true if rid is shared locked by this transaction */
+        auto IsSharedLocked(const RID &rid) -> bool { return shared_lock_set_->find(rid) != shared_lock_set_->end(); }
+
+        /** @return true if rid is exclusively locked by this transaction */
+        auto IsExclusiveLocked(const RID &rid) -> bool {
+            return exclusive_lock_set_->find(rid) != exclusive_lock_set_->end();
+        }
+
+        /** @return the current state of the transaction */
+        inline auto GetState() -> TransactionStateWith2PL { return state_; }
+
+        /**
+         * Set the state of the transaction.
+         * @param state new state
+         */
+        inline void SetState(TransactionStateWith2PL state) { state_ = state; }
+
+        /**
+         * Set the isolation level of the transaction.
+         */
+        inline void SetIsolationLevel(IsolationLevelWith2PL isolation_level) { isolation_level_ = isolation_level; }
+
+        /** @return the previous LSN */
+        inline auto GetPrevLSN() -> lsn_t { return prev_lsn_; }
+
+        /**
+         * Set the previous LSN.
+         * @param prev_lsn new previous lsn
+         */
+        inline void SetPrevLSN(lsn_t prev_lsn) { prev_lsn_ = prev_lsn; }
+
+    private:
+        /** The current transaction state. */
+        TransactionStateWith2PL state_{TransactionStateWith2PL::GROWING};
+        /** The isolation level of the transaction. */
+        IsolationLevelWith2PL isolation_level_;
+        /** The thread ID, used in single-threaded transactions. */
+        std::thread::id thread_id_;
+        /** The ID of this transaction. */
+        txn_id_t txn_id_;
+
+        /** The undo set of table tuples. */
+        std::shared_ptr<std::deque<TableWriteRecord>> table_write_set_;
+        /** The undo set of indexes. */
+        std::shared_ptr<std::deque<IndexWriteRecord>> index_write_set_;
+        /** The LSN of the last record written by the transaction. */
+        lsn_t prev_lsn_;
+
+        /** LockManager: the set of shared-locked tuples held by this transaction. */
+        std::shared_ptr<std::unordered_set<RID>> shared_lock_set_;
+        /** LockManager: the set of exclusive-locked tuples held by this transaction. */
+        std::shared_ptr<std::unordered_set<RID>> exclusive_lock_set_;
+    };
+
+}  // namespace bustub
